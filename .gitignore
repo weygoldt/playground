@@ -1,3 +1,5 @@
 thunderfish 
 .python_version
 .python-version
+*.nix
+*.h5
