@@ -55,17 +55,24 @@ signal = DataLoader(
     verbose=0,
     channel=-1,
 )
+
 samplingrate = 20000
 nfft = freqres_to_nfft(6, samplingrate)
-overlap = 0.99
+fft_overlap = 0.99
+spec_overlap = 100  # num windows overlapping between two spectrograms
 print(f"NFFT: {nfft}")
+print(f"FFT overlap: {fft_overlap}")
+print(f"Spec overlap: {spec_overlap}")
 
-hop_length = int(nfft * (1 - overlap))
+window_start_index = (3 * 60 * 60 + 6 * 60 + 20) * samplingrate
+signal = signal[window_start_index:]
+
+hop_length = int(nfft * (1 - fft_overlap))
 print(f"Hop length: {hop_length}")
 
 chunksize = samplingrate * buffersize
 nchunks = int(np.ceil(len(signal[0]) / chunksize))
-nchunks = 5
+nchunks = 8
 nelectrodes = len(signal[1])
 
 # Configure spec and conversion function and put to gpu
@@ -83,14 +90,19 @@ file = nio.File.open(
 
 block = file.create_block("1", "recording number 1")
 
-timetracker = 0  # Keep track of the time axis
+sampletracker = 0  # Keep track of the sample axis
 for i in range(nchunks):
-    print(f"Chunk {i}/{nchunks}")
+    print(f"Chunk {i+1}/{nchunks}")
+
+    if i == 0:
+        chunkstart = 0
+        chunkstop = chunksize
 
     for e in range(nelectrodes):
         # Load data chunk from file to gpu
-        wav_chunk = signal[i * chunksize : (i + 1) * chunksize, e]
+        wav_chunk = signal[chunkstart:chunkstop, e]
         wav_chunk = torch.from_numpy(wav_chunk).to(device)
+        end_index = wav_chunk.shape[0]
 
         # Compute spectrogram
         spec_chunk = spectrogram_of(wav_chunk)
@@ -105,13 +117,41 @@ for i in range(nchunks):
     # Move spectrogram to cpu
     spec_chunk_sum = spec_chunk_sum.cpu().numpy()
 
-    # Compute time and frequency axis
-    time = np.arange(spec_chunk_sum.shape[1]) * hop_length / samplingrate
-    time += timetracker
+    # Compute start for next window
+    # Overlap for all subsequent chunks
+    # For this convert spectrogram overlap into samples
+
+    chunkstart = int(chunkstop - (spec_overlap * 2 * hop_length))
+    chunkstop = chunkstart + chunksize
+
+    print(chunkstart, chunkstop)
+
+    # Compute current sample, time and frequency axis
+    # for the spectrogram corresponding to the raw data
+
+    samples = np.arange(spec_chunk_sum.shape[1]) * hop_length
+    samples += sampletracker
+    time = samples / samplingrate
     freq = np.arange(spec_chunk_sum.shape[0]) * samplingrate / nfft
 
-    # plt.pcolormesh(time, freq, spec_chunk_sum)
-    # plt.show()
+    # apply overlap of spectrogram to remove edge effects
+    if i == 0:
+        spec_chunk_sum = spec_chunk_sum[:, :-spec_overlap]
+        time = time[:-spec_overlap]
+    elif i == nchunks - 1:
+        spec_chunk_sum = spec_chunk_sum[:, spec_overlap:]
+        time = time[spec_overlap:]
+    else:
+        spec_chunk_sum = spec_chunk_sum[:, spec_overlap:-spec_overlap]
+        time = time[spec_overlap:-spec_overlap]
+
+    plt.pcolormesh(time, freq, spec_chunk_sum)
+    # plt.axvline(chunkstart / samplingrate, color="red")
+    # plt.axvline(time[spec_overlap], color="gray")
+    # plt.axvline(time[-spec_overlap], color="gray")
+    plt.show()
+
+    print(time[-1] - time[0])
 
     if i == 0:
         # Create data arrays in the file
@@ -128,6 +168,5 @@ for i in range(nchunks):
         # Append data arrays to file
         spectrogram.append(spec_chunk_sum, axis=1)
         spectrogram_time.append(time, axis=0)
-        spectrogram_freq.append(freq, axis=0)
 
-    timetracker = time[-1]
+    sampletracker = samples[-1]
