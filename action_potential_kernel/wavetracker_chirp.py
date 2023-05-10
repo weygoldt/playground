@@ -17,7 +17,7 @@ def gaussian(chirp_t, mu, width, kurt):
 
 
 def chirps(
-    eodf=100.0,
+    eodf=500,
     samplerate=44100.0,
     duration=1.0,
     chirp_times=[0.5],
@@ -91,17 +91,19 @@ def chirps(
             gi1 -= i1 - len(frequency)
             i1 = len(frequency)
         frequency[i0:i1] += gauss[gi0:gi1]
-        am[i0:i1] -= contrast * gauss[gi0:gi1]
+        am[i0:i1] -= contrast * gauss[gi0:gi1] / size
 
     return frequency, am
 
 
 def main():
-    chirp, amp = chirps()
-    plt.plot(chirp)
-    plt.show()
+    chirp, amp = chirps(duration=0.1, chirp_times=[0.05])
+    fig, ax = plt.subplots(1, 2, sharex=True)
 
-    plt.plot(amp)
+    ax[0].plot(chirp)
+    ax[0].set_title("Frequency trace")
+    ax[1].plot(amp)
+    ax[1].set_title("Amplitude modulation")
     plt.show()
 
 
